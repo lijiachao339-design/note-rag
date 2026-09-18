@@ -255,7 +255,17 @@ MARKDOWN_SUFFIXES = {".md", ".markdown"}
 
 
 def iter_vault_files(vault: Path, *, include_hidden: bool = False) -> list[Path]:
-    """List markdown files in a vault, skipping Obsidian internals."""
+    """List markdown files in a vault, skipping Obsidian internals.
+
+    Only hidden *directories* are skipped (``.obsidian``, ``.trash``, ``.git``, ...). A
+    markdown file whose own name starts with a dot is real content and must be indexed.
+
+    This used to test every path part, filename included. That silently dropped 2 of 1947
+    notes in ``data/corpus``, where the source directory is flattened into the file name
+    (``.agents/notes/AGENTS.md`` becomes ``.agents__notes__AGENTS__<hash>.md`` -- a file,
+    not a hidden path). The eval set still labelled them, so 3 questions were unwinnable for
+    every mode while nothing reported an error. See docs/reviews/review-001, S2.
+    """
     skip_dirs = {".obsidian", ".trash", ".git", "node_modules"}
     files: list[Path] = []
     for path in vault.rglob("*"):
@@ -264,7 +274,8 @@ def iter_vault_files(vault: Path, *, include_hidden: bool = False) -> list[Path]
         rel = path.relative_to(vault)
         if any(part in skip_dirs for part in rel.parts):
             continue
-        if not include_hidden and any(part.startswith(".") for part in rel.parts):
+        # rel.parts[:-1] is the directory chain; rel.parts[-1] is the file name itself.
+        if not include_hidden and any(part.startswith(".") for part in rel.parts[:-1]):
             continue
         files.append(path)
     return sorted(files)

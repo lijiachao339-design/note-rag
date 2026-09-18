@@ -148,6 +148,20 @@ def test_corpus_and_index_stats_are_reported(retriever: Retriever) -> None:
     assert retriever.corpus_stats() == {"chunks": 3, "notes": 2}
 
 
+def test_indexed_notes_lists_every_note_and_builds_the_index_lazily(
+    retriever: Retriever,
+) -> None:
+    """The eval harness uses this to fail loudly on labels pointing at unindexed notes.
+
+    It must be self-sufficient like search(): the caller should not have to remember to call
+    build_keyword_index() first (docs/reviews/review-001, S10).
+    """
+    assert retriever.indexed_notes() == {
+        "20-知识/检索/混合检索.md",
+        "20-知识/检索/BM25.md",
+    }
+
+
 def test_invalid_arguments_are_rejected(retriever: Retriever) -> None:
     with pytest.raises(ValueError, match="must not be empty"):
         retriever.search("   ", k=1, mode="keyword")

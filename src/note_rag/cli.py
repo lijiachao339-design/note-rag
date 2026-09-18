@@ -107,6 +107,28 @@ def _load_dataset(path: Path) -> list[dict[str, object]]:
     return rows
 
 
+def _grades_for(row: dict[str, object]) -> dict[str, float]:
+    """Relevance grades for one row, as ``{note_path: grade}``.
+
+    ``relevant_notes`` accepts two shapes:
+
+    * a list -- every listed note has grade 1 (and ``[]`` means *unanswerable*: a legal,
+      deliberate value used to expose retrievers that always return something);
+    * an object ``{note: grade}`` -- graded relevance.
+
+    Grades exist because the corpus is a strict bilingual mirror. The translated twin of a
+    note answers the same question, so calling it irrelevant is wrong; but it is not the
+    note the question was written from either. Grade 2 = the source note, grade 1 = its
+    translation. See docs/reviews/review-001, S8.
+    """
+    relevant = row["relevant_notes"]
+    if isinstance(relevant, dict):
+        return {str(note): float(grade) for note, grade in relevant.items()}
+    if isinstance(relevant, (list, tuple)):
+        return {str(note): 1.0 for note in relevant}
+    raise ValueError(f"{row['id']!r}: relevant_notes 必须是数组或 {{笔记: 等级}} 对象")
+
+
 def cmd_eval(args: argparse.Namespace) -> int:
     settings = get_settings()
     dataset = _load_dataset(Path(args.dataset))
@@ -114,15 +136,21 @@ def cmd_eval(args: argparse.Namespace) -> int:
     loaded = retriever.build_keyword_index()
     _log(f"loaded {loaded} chunks; {len(dataset)} questions\n")
 
-    qrels: dict[str, list[str]] = {}
-    for row in dataset:
-        relevant = row["relevant_notes"]
-        if not isinstance(relevant, (list, tuple)):
-            raise ValueError(f"{row['id']!r}: relevant_notes 必须是数组")
-        # 空数组是合法的：它表示“这份语料无法回答该问题”，用于暴露幻觉式检索。
-        qrels[str(row["id"])] = [str(item) for item in relevant]
+    qrels: dict[str, dict[str, float]] = {str(row["id"]): _grades_for(row) for row in dataset}
+
+    # 标注了却没被索引的笔记 = 该问题对所有模式永久记 0，而且看起来像“检索很差”。
+    # 这种错位必须当场炸，不能变成一个漂亮的低分。见 docs/reviews/review-001 的 S10。
+    labelled = {note for grades in qrels.values() for note in grades}
+    unknown = sorted(labelled - retriever.indexed_notes())
+    if unknown:
+        raise ValueError(
+            f"{len(unknown)} 篇被标注的笔记不在索引里，评测会静默记 0；"
+            f"例如 {unknown[:3]}。请先 `note-rag ingest` 或修正 relevant_notes。"
+        )
+
     reports: dict[str, dict[str, float]] = {}
     latencies: dict[str, list[float]] = {}
+    all_rankings: dict[str, dict[str, list[str]]] = {}
 
     for mode in args.modes:
         rankings: dict[str, list[str]] = {}
@@ -138,6 +166,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
         report["p50_ms"] = percentile(latencies[mode], 50)
         report["p95_ms"] = percentile(latencies[mode], 95)
         reports[mode] = report
+        all_rankings[mode] = rankings
 
     lines = ["# Retrieval ablation", "", f"Queries: {len(dataset)}", ""]
     metrics = ["recall@1", "recall@5", "recall@10", "mrr", "ndcg@10", "p50_ms", "p95_ms"]
@@ -167,7 +196,14 @@ def cmd_eval(args: argparse.Namespace) -> int:
             + "\n",
             encoding="utf-8",
         )
-        _log(f"wrote {out_path} and {json_path}")
+        # 逐条排名也落盘：任何切片（按语言、按难度、按泄漏分组）都能离线复算，
+        # 不必为了换一种分组就重跑一次几分钟的评测。
+        rankings_path = out_path.with_name(f"{out_path.stem}.rankings.json")
+        rankings_path.write_text(
+            json.dumps(all_rankings, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        _log(f"wrote {out_path}, {json_path} and {rankings_path}")
         for mode, report in reports.items():
             _log(format_report(report, title=mode))
     return 0

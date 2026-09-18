@@ -162,3 +162,23 @@ def test_iter_vault_files_skips_obsidian_internals(tmp_path: Path) -> None:
 
     found = {path.relative_to(tmp_path).as_posix() for path in iter_vault_files(tmp_path)}
     assert found == {"note.md", "sub/deep.markdown"}
+
+
+def test_iter_vault_files_keeps_markdown_whose_name_starts_with_a_dot(tmp_path: Path) -> None:
+    """Regression: only hidden *directories* are internals; a dotted file name is content.
+
+    data/corpus flattens the source directory into the file name, so `.agents/notes/AGENTS.md`
+    becomes `.agents__notes__AGENTS__<hash>.md`. Treating that as hidden silently dropped 2 of
+    1947 notes from the index while the eval set still labelled them, which made 3 questions
+    unwinnable for every mode (docs/reviews/review-001, S2).
+    """
+    (tmp_path / ".agents__notes__AGENTS__b84ef955.md").write_text("# agents", encoding="utf-8")
+    (tmp_path / "plain.md").write_text("# plain", encoding="utf-8")
+    (tmp_path / ".hidden").mkdir()
+    (tmp_path / ".hidden" / "inside.md").write_text("junk", encoding="utf-8")
+
+    found = {path.relative_to(tmp_path).as_posix() for path in iter_vault_files(tmp_path)}
+
+    assert found == {".agents__notes__AGENTS__b84ef955.md", "plain.md"}, (
+        "点开头的 .md 文件是真实内容，只有点开头的目录才是 Obsidian 内部文件"
+    )

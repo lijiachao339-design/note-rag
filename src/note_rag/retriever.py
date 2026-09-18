@@ -126,6 +126,17 @@ class Retriever:
     def index_stats(self) -> dict[str, int]:
         return {"keyword_index_docs": len(self.bm25), "chunks_cached": len(self._chunks)}
 
+    def indexed_notes(self) -> set[str]:
+        """Every note path currently in the index (builds the index on first use).
+
+        The eval harness calls this to fail loudly when a labelled note was never indexed.
+        Without it, a note the indexer skipped simply scores 0 for every mode and every
+        query that points at it -- indistinguishable from "retrieval is bad". See
+        docs/reviews/review-001, S10.
+        """
+        self._ensure_index()
+        return {hit.note_path for hit in self._chunks.values() if hit.note_path}
+
     # -- retrieval ------------------------------------------------------------------
 
     def _vector_ranking(self, query: str, limit: int) -> list[str]:
