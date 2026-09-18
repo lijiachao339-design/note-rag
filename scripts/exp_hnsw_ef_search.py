@@ -66,6 +66,25 @@ def vector_rankings(conn, embedder, rows, *, top_k: int) -> dict[str, list[str]]
     return rankings
 
 
+def _strict_grades(relevant: object) -> dict[str, float]:
+    """``relevant_notes`` -> ``{note: grade}``，只保留 grade 最高的那些（strict 视图）。
+
+    接受两种形状：数组（旧格式，全部 grade 1）与 ``{笔记: 等级}`` 字典（当前格式）。
+    与 `note_rag.cli._strict_view` 是同一个口径 —— 两边不一致的话，这个脚本报出来的
+    recall 就没法和 `eval/out/ablation.md` 放在一起看。
+    """
+    if isinstance(relevant, dict):
+        grades = {str(note): float(grade) for note, grade in relevant.items()}
+    elif isinstance(relevant, (list, tuple)):
+        grades = {str(note): 1.0 for note in relevant}
+    else:
+        raise ValueError(f"relevant_notes 形状不对: {type(relevant).__name__}")
+    if not grades:
+        return {}
+    top = max(grades.values())
+    return {note: grade for note, grade in grades.items() if grade == top}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="测试 hnsw.ef_search 对 vector 召回的影响")
     parser.add_argument("--vals", type=int, nargs="+", default=[40, 100, 200, 400])
@@ -75,8 +94,13 @@ def main(argv: list[str] | None = None) -> int:
     settings = get_settings()
     rows = load_rows()
     answerable = [row for row in rows if row.get("answerable")]
-    qrels = {str(row["id"]): list(row["relevant_notes"]) for row in rows}  # type: ignore[arg-type]
-    print(f"数据集 {len(rows)} 行（可回答 {len(answerable)}）")
+    # 口径必须与 `note-rag eval` 的 **strict 视图**一致：只认问题所出自的那一篇（grade 最高）。
+    # 这里原来写的是 `list(row["relevant_notes"])` —— 对一个 {笔记: 等级} 字典取 list 只会拿到键，
+    # grade 被丢掉，于是所有笔记都成了 grade 1，测的是另一套口径，数字与评测不可比。
+    qrels = {str(row["id"]): _strict_grades(row["relevant_notes"]) for row in rows}
+    print(
+        f"数据集 {len(rows)} 行（可回答 {len(answerable)}）；口径：strict（只认原文，与 eval 一致）"
+    )
 
     conn = store.connect(settings.database_url)
     embedder = build_embedder(

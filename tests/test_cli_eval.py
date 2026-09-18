@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 
 from note_rag.bm25 import content_tokens
-from note_rag.cli import _abstain_coverage, _grades_for
+from note_rag.cli import _abstain_coverage, _grades_for, _leak_bucket, _strict_view
 from note_rag.retriever import SearchHit
 
 
@@ -75,3 +75,37 @@ def test_abstain_coverage_separates_an_on_topic_hit_from_an_off_topic_one() -> N
 
 def test_abstain_coverage_of_no_hits_is_zero() -> None:
     assert _abstain_coverage("任何问题", []) == 0.0
+
+
+def test_strict_view_keeps_only_the_note_the_question_came_from() -> None:
+    """The twin is genuinely relevant, but counting it caps recall at ~0.5 for a retriever
+    that cannot cross languages -- a property of the corpus, not of the ranking."""
+    qrels = {"q1": {"src.md": 2.0, "src.zh.md": 1.0}, "q2": {"solo.md": 2.0}}
+
+    assert _strict_view(qrels) == {"q1": {"src.md": 2.0}, "q2": {"solo.md": 2.0}}
+
+
+def test_strict_view_leaves_unanswerable_queries_empty() -> None:
+    """They must stay excluded from the ranking tables under either view."""
+    assert _strict_view({"n1": {}}) == {"n1": {}}
+
+
+def test_strict_view_keeps_every_document_tied_at_the_top_grade() -> None:
+    """Two equally-primary notes is a labelling shape we should not silently drop half of."""
+    qrels = {"q1": {"a.md": 2.0, "b.md": 2.0, "c.md": 1.0}}
+
+    assert _strict_view(qrels) == {"q1": {"a.md": 2.0, "b.md": 2.0}}
+
+
+def test_leak_buckets_match_the_boundaries_the_dataset_report_uses() -> None:
+    """The eval table and eval/dataset.report.md must bucket identically or they disagree."""
+    assert [_leak_bucket(df) for df in (0, 2, 3, 10, 11, 50, 51, 9999)] == [
+        "<=2",
+        "<=2",
+        "3-10",
+        "3-10",
+        "11-50",
+        "11-50",
+        ">50",
+        ">50",
+    ]

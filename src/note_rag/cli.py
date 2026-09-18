@@ -37,6 +37,24 @@ from note_rag.retriever import Mode, Retriever, SearchHit
 
 MODES: tuple[Mode, ...] = ("vector", "keyword", "hybrid", "hybrid_rerank")
 
+# S1 的词法泄漏分桶：问题与目标笔记共享的最稀有 token 在全语料的 note 级文档频率。
+# 上界取自 scripts/build_eval_dataset.py 的同名分桶，两边必须一致，否则报告对不上。
+LEAK_BUCKETS: tuple[str, ...] = ("<=2", "3-10", "11-50", ">50")
+
+
+def _as_int(value: object) -> int:
+    return int(value) if isinstance(value, (int, float, str)) and str(value).strip() else 0
+
+
+def _leak_bucket(min_df: int) -> str:
+    if min_df <= 2:
+        return "<=2"
+    if min_df <= 10:
+        return "3-10"
+    if min_df <= 50:
+        return "11-50"
+    return ">50"
+
 
 def _log(message: str) -> None:
     print(message, flush=True)
@@ -147,12 +165,46 @@ class ModeReport:
     Quality and latency live in separate fields on purpose: flattening them into one dict is
     what turned "every metric is within [0, 1]" into a landmine once p95_ms joined the
     mapping (docs/reviews/review-001, S4).
+
+    ``quality`` is keyed by *view* -- which documents count as relevant -- because this
+    corpus makes that choice load-bearing:
+
+    * ``strict``   -- only the note the question was written from (the highest grade).
+      Comparable with the single-label numbers in exp-001, and not capped by the language
+      barrier, so this is the one to quote for retrieval quality.
+    * ``graded``   -- the translated twin counts too. Lexical retrieval cannot cross
+      languages, so recall here has a structural ceiling near 0.5 that says nothing about
+      ranking quality; nDCG under this view is the honest measure of the multilingual gap.
+    * ``strict_no_leak`` -- ``strict`` minus the questions that copied a near-unique
+      identifier out of their source note (docs/reviews/review-001, S1).
     """
 
-    quality: dict[str, float]
+    quality: dict[str, dict[str, float]]
     abstention: dict[str, float]
     by_lang: dict[str, dict[str, str]]
+    by_leak_df: dict[str, str]
     latency_ms: dict[str, float]
+
+
+def _strict_view(qrels: dict[str, dict[str, float]]) -> dict[str, dict[str, float]]:
+    """Keep only the top-graded document per query -- the note the question came from.
+
+    Why a second view exists at all: this corpus is a strict bilingual mirror, so grading the
+    translated twin as relevant (grade 1) is correct, but lexical retrieval can never cross
+    the language boundary. Under the graded view that puts a structural ceiling near 0.5 on
+    recall@k which reflects the corpus, not the retriever -- and 0.45 is a number that reads
+    as "BM25 is bad" when its hit rate is nearly twice that. See docs/reviews/impl-005.
+
+    An unanswerable query (empty grades) stays empty, so it is still excluded everywhere.
+    """
+    strict: dict[str, dict[str, float]] = {}
+    for qid, grades in qrels.items():
+        if not grades:
+            strict[qid] = {}
+            continue
+        top = max(grades.values())
+        strict[qid] = {note: grade for note, grade in grades.items() if grade == top}
+    return strict
 
 
 def _abstain_coverage(question: str, hits: Sequence[SearchHit]) -> float:
@@ -199,6 +251,11 @@ def cmd_eval(args: argparse.Namespace) -> int:
             f"例如 {unknown[:3]}。请先 `note-rag ingest` 或修正 relevant_notes。"
         )
 
+    strict_qrels = _strict_view(qrels)
+    leaked_of = {str(row["id"]): bool(row.get("leak", False)) for row in dataset}
+    leak_bucket_of = {
+        str(row["id"]): _leak_bucket(_as_int(row.get("leak_min_df"))) for row in dataset
+    }
     answerable = {str(row["id"]): bool(qrels[str(row["id"])]) for row in dataset}
     answerable_ids = [qid for qid, flag in answerable.items() if flag]
     unanswerable_ids = [qid for qid, flag in answerable.items() if not flag]
@@ -249,13 +306,19 @@ def cmd_eval(args: argparse.Namespace) -> int:
         ranked = rankings_by_mode[mode]
         # 排序质量只统计可回答问题：不可回答问题在 recall/MRR/nDCG 上恒等于 0，
         # 与检索器返回什么完全无关，混进均值只是把所有数字乘上一个常数。见 review-001 的 S4。
-        quality = evaluate({qid: ranked[qid] for qid in answerable_ids}, qrels, ks=args.ks)
+        answered = {qid: ranked[qid] for qid in answerable_ids}
+        no_leak = {qid: ranked[qid] for qid in answerable_ids if not leaked_of[qid]}
+        quality = {
+            "strict": evaluate(answered, strict_qrels, ks=args.ks),
+            "graded": evaluate(answered, qrels, ks=args.ks),
+            "strict_no_leak": evaluate(no_leak, strict_qrels, ks=args.ks),
+        }
         abstained = {qid: coverage_by_mode[mode][qid] < args.abstain_threshold for qid in ranked}
         abstention = abstention_report(abstained, answerable)
         # 拒答的代价必须用同一个阈值、同一批查询算出来：被拒答的查询按空排序计分。
         # 只报拒答率，会让"几乎什么都召不回"的检索器看起来最擅长拒答。
         abstention["recall@5_on_answerable"] = sum(
-            recall_at_k([] if abstained[qid] else ranked[qid], qrels[qid], 5)
+            recall_at_k([] if abstained[qid] else ranked[qid], strict_qrels[qid], 5)
             for qid in answerable_ids
         ) / len(answerable_ids)
 
@@ -267,7 +330,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
                 "queries": str(len(ids)),
                 "notes": str(len(set(clusters.values()))),
                 "recall@5": _ci(
-                    {qid: recall_at_k(ranked[qid], qrels[qid], 5) for qid in ids},
+                    {qid: recall_at_k(ranked[qid], strict_qrels[qid], 5) for qid in ids},
                     clusters,
                     args.bootstrap_samples,
                 ),
@@ -276,7 +339,21 @@ def cmd_eval(args: argparse.Namespace) -> int:
                     clusters,
                     args.bootstrap_samples,
                 ),
+                "abstain_rate": (
+                    f"{sum(1 for qid in unanswerable_ids if lang_of[qid] == lang and abstained[qid])}"
+                    f"/{sum(1 for qid in unanswerable_ids if lang_of[qid] == lang)}"
+                ),
+                "false_abstain": (f"{sum(1 for qid in ids if abstained[qid]) / len(ids):.3f}"),
             }
+
+        # S1 的泄漏分组：问题抄了目标笔记里多稀有的词，直接对应 BM25 能不能不检索就命中。
+        by_leak_df: dict[str, str] = {}
+        for label in LEAK_BUCKETS:
+            ids = [qid for qid in answerable_ids if leak_bucket_of[qid] == label]
+            if not ids:
+                continue
+            hit = sum(recall_at_k(ranked[qid], strict_qrels[qid], 5) for qid in ids) / len(ids)
+            by_leak_df[label] = f"{hit:.3f} (n={len(ids)})"
 
         p50s = [percentile(run, 50) for run in latency_by_mode[mode]]
         p95s = [percentile(run, 95) for run in latency_by_mode[mode]]
@@ -284,6 +361,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
             quality=quality,
             abstention=abstention,
             by_lang=by_lang,
+            by_leak_df=by_leak_df,
             latency_ms={
                 "repeats": float(repeats),
                 "p50_median": percentile(p50s, 50),
@@ -352,8 +430,11 @@ def _render_report(
     def row(label: str, cells: list[str]) -> str:
         return f"| {label} | " + " | ".join(cells) + " |"
 
-    def quality(metric: str) -> list[str]:
-        return [f"{reports[mode].quality[metric]:.4f}" for mode in modes]
+    def quality(view: str, metric: str) -> list[str]:
+        return [f"{reports[mode].quality[view][metric]:.4f}" for mode in modes]
+
+    def leak_cell(bucket: str) -> list[str]:
+        return [reports[mode].by_leak_df.get(bucket, "n/a") for mode in modes]
 
     def abstain(key: str) -> list[str]:
         return [f"{reports[mode].abstention.get(key, 0.0):.4f}" for mode in modes]
@@ -381,10 +462,35 @@ def _render_report(
         divider,
     ]
     for k in args.ks:
-        lines.append(row(f"recall@{k}", quality(f"recall@{k}")))
-    lines.append(row("mrr", quality("mrr")))
-    for k in args.ks:
-        lines.append(row(f"ndcg@{k}", quality(f"ndcg@{k}")))
+        lines.append(row(f"recall@{k} (strict)", quality("strict", f"recall@{k}")))
+    lines.append(row("mrr (strict)", quality("strict", "mrr")))
+    lines.append(row("ndcg@10 (strict)", quality("strict", "ndcg@10")))
+    lines += [
+        "",
+        "**graded 视图**（译文孪生也算相关）——只用来看多语言缺口，不要当检索质量引用：",
+        "",
+        header,
+        divider,
+        row("recall@5 (graded)", quality("graded", "recall@5")),
+        row("recall@10 (graded)", quality("graded", "recall@10")),
+        row("ndcg@10 (graded)", quality("graded", "ndcg@10")),
+        "",
+        "**排除 `leak: true` 之后**（strict 视图；剔除了问题里抄有目标笔记近乎唯一标识符的那些）：",
+        "",
+        header,
+        divider,
+        row("recall@5 (strict, no leak)", quality("strict_no_leak", "recall@5")),
+        row("mrr (strict, no leak)", quality("strict_no_leak", "mrr")),
+        row("ndcg@10 (strict, no leak)", quality("strict_no_leak", "ndcg@10")),
+        "",
+        "**按词法泄漏分组的 recall@5（strict）**——df 是问题与目标笔记共享的最稀有 token 的",
+        "note 级文档频率，越低说明问题里抄的指纹词越独特：",
+        "",
+        header,
+        divider,
+    ]
+    for bucket in LEAK_BUCKETS:
+        lines.append(row(f"df {bucket}", leak_cell(bucket)))
 
     lines += [
         "",
@@ -417,6 +523,8 @@ def _render_report(
     for lang in langs:
         lines.append(row(f"{lang} recall@5", lang_cell(lang, "recall@5")))
         lines.append(row(f"{lang} ndcg@10", lang_cell(lang, "ndcg@10")))
+        lines.append(row(f"{lang} 拒答率(不可回答)", lang_cell(lang, "abstain_rate")))
+        lines.append(row(f"{lang} 误拒率(可回答)", lang_cell(lang, "false_abstain")))
         counts = [
             f"{reports[mode].by_lang[lang]['queries']} 题 / {reports[mode].by_lang[lang]['notes']} 篇"
             for mode in modes
@@ -442,8 +550,11 @@ def _render_report(
         "",
         "## 怎么读这张表",
         "",
-        "- `recall@k` 在本数据集上是**真 recall**（多数问题有 2 篇相关笔记：原文 + 译文孪生），",
-        "  因此**不能**与 exp-001 的单标签数字直接比较。单标签下它其实是 Success@k / Hit Rate@k。",
+        "- **两个视图**：`strict` 只认问题所出自的那一篇；`graded` 把译文孪生（grade 1）也算相关。",
+        "  词法检索跨不过语言边界，所以 `graded` 的 recall 有一个约 0.5 的**结构性上限**，",
+        "  那反映的是语料是双语镜像，不是检索质量。**要引用检索质量就引用 strict**，",
+        "  它与 exp-001 的单标签数字口径一致（单标签下 recall@k 即 Success@k / Hit Rate@k）。",
+        "- `graded` 的 nDCG@10 才是多语言缺口的诚实度量：它同时看原文和孪生的名次。",
         "- `precision@k` 已从报告中移除：它恒等于 `recall@k * |relevant| / k`，不提供独立信息。",
         "- 不可回答问题**不在**第 1 张表里。它们在 recall/MRR/nDCG 上恒为 0，与检索器行为无关，",
         "  混进均值只会把所有数字乘上一个常数。它们的作用在第 2 张表。",
