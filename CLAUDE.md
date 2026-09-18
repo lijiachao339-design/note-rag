@@ -43,6 +43,10 @@ uv run ruff check . ; uv run mypy       # 质量门禁
 | `fusion.py` | 排序必须确定性（tie-break 到 id） | 否则评测数字不可复现 |
 | `retriever.py` | 四种模式共用同一实现 | 评测与线上走不同代码路径则数字失真 |
 | `mcp_server.py` | 文件路径必须校验是否逃出 vault | 模型可以传入 `../../` 之类的路径 |
+| `mcp_server.py` | 必须用 `mcp.server.mcpserver.MCPServer` | `mcp` 2.x 已把 `FastMCP` 改名，照抄 v1 示例会 `ModuleNotFoundError` |
+| `retriever.py` | `search()` 必须自给自足（懒构建 BM25 与 hydration 缓存） | 漏建索引时 `_hydrate` 会静默降级，命中全是空字符串，而健康检查与指标仍全绿 |
+| `api.py` | lifespan 里必须构建关键词索引 | 否则 `/healthz`、`/metrics` 会"看起来健康"，而检索结果为空 |
+| `pyproject.toml` | `extend-exclude` 必须保留 `data` | 语料有上千文件；未 `git init` 时 `.gitignore` 不生效，lint 会从 26 个文件膨胀到 2000 个 |
 
 ## 禁止
 

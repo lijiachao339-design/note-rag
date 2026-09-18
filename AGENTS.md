@@ -43,10 +43,30 @@ uv run note-rag ingest --dry-run
 - 不要引入 LangChain / LlamaIndex 之类的重型框架封装检索链路（面试需要能逐行讲清）。
 - 不要在没有评测数据支撑的情况下修改默认 chunk 大小、RRF k 值或检索权重。
 
+## 已经踩过的坑（别再踩第二次）
+
+1. **MCP 2.x 改名**：`mcp` 2.x 把 `FastMCP` 改名为 `MCPServer`（`mcp.server.mcpserver`）。
+   照抄 v1 示例会 `ModuleNotFoundError`。改完 MCP 代码必须跑一次导入冒烟。
+2. **API 返回空命中**：`AppState` 曾漏调 `build_keyword_index()`，导致 `/search` 返回的
+   `note_path`/`title`/`text` 全是空字符串，而 `/healthz`、`/metrics` 一切正常。
+   已加 `tests/test_retriever.py` 回归测试，并在 lifespan 里启动即建索引。
+3. **评分函数的测试写错**：RRF 里"某文档在所有列表都排第 1"时，改权重不会改它的分数
+   （只改它与其它文档的差距）。写这类断言前先把公式算一遍。
+4. **只有标题没有正文的笔记产出 0 个切块**——这是正确行为（标题属于元数据），
+   但写测试时别拿 `"# ok"` 当"可读文件"的样例。
+5. **语料目录会让 lint 膨胀**：`data/corpus` 有上千个文件，而仓库尚未 `git init` 时
+   `.gitignore` 不生效，`ruff` 会从 26 个文件扫到 2000 个。`pyproject.toml` 里的
+   `extend-exclude = ["data", ...]` 必须保留。
+
 ## 有价值的下一步（按优先级）
 
+0. **补集成测试**：`api` / `cli` / `mcp_server` / `retriever` 的 DB 路径覆盖率仍是 0%，
+   总覆盖率约 48%。CI 里已经有 pg service，把它用起来跑真库集成测试（并断言 `/search` 的命中
+   必须带非空 `note_path` 与 `text`——这正是第 2 条坑的防线）。
 1. 接入真实 reranker 并产出 `hybrid` vs `hybrid_rerank` 的评测对比
 2. 把 embedding 缓存从进程内 dict 迁到 Redis，并统计多副本下的命中率
-3. 关键词索引改为增量刷新（当前每次启动全量构建）
+3. 关键词索引改为增量刷新（当前每次启动全量构建，17520 chunks 约 1 s，暂时可接受）
 4. 中文分词实验：unigram+bigram（现状）vs `pg_bigm` vs `zhparser`
 5. 小节合并策略消融：跨同级标题共享父级 breadcrumb 是否提升 recall
+6. 换嵌入模型时 `vector(dim)` 是建表时固定的：`ensure_schema` 目前不会检测维度变化，
+   维度不一致会在插入时报错。应显式检测并给出可操作的报错（或自动重建表）

@@ -4,6 +4,29 @@
 
 > 这是 `实习项目路线图.md` 中 P1 项目的工程骨架，已包含可运行的核心链路、测试、CI 与 Docker。当前检索指标为占位值，替换成你自己跑出来的数字后才写进简历。
 
+## 实测结果（本机已跑通，不是占位值）
+
+| 项 | 实测值 |
+| --- | --- |
+| 语料 | **1947 篇 / 13.41 MB** markdown，由 `scripts/prepare_corpus.py` 固化，指纹 `9854a816415b1a9579b6786af6f975f19af4e06f` |
+| 切块 | **17520 chunks / 1945 notes** |
+| 首次全量索引 | **48.46 s**，17520 次嵌入调用 |
+| 重复同步（增量不变量） | **1.04 s，0 次嵌入**（`nothing changed; skipping embeddings entirely`） |
+| 静态门禁 | `ruff check` ✅ ｜ `ruff format --check` ✅ ｜ `mypy --strict` 13 个文件 0 问题 |
+| 测试 | **72 passed**（fusion / metrics / bm25 / notes / ingest / retriever） |
+| HTTP API | `/healthz` → `{"status":"ok","corpus":{"chunks":17520,"notes":1945}}`；`/search` 返回带 `note_path`/`title`/正文的命中 |
+| 检索指标 | 待填：需要先做 `eval/dataset.jsonl`（见下节） |
+
+> ⚠️ **依赖 `mcp>=2.2`**：`mcp` 2.x 把 `FastMCP` 改名为 `MCPServer`
+> （`from mcp.server.mcpserver import MCPServer`）。照抄 v1 示例会得到
+> `ModuleNotFoundError: No module named 'mcp.server.fastmcp'`。
+
+### 覆盖率现状（诚实记录，别在简历里含糊）
+
+`pytest --cov` 总覆盖率约 **48%**：`bm25` 97%、`notes` 97%、`fusion` 100%、`metrics` 94%、`ingest` 87%，
+但 `api` / `cli` / `mcp_server` / `retriever` 里依赖数据库的路径还缺集成测试。
+补法是起一个真实 Postgres 的 integration 测试（CI 里已有 pg service，把它用起来）。
+
 ## 为什么用 Postgres 而不是专用向量库
 
 1. 语料规模在 1 万 chunk 量级，pgvector 的 HNSW 索引足够快；
