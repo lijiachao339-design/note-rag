@@ -80,6 +80,23 @@ NEGATIVE_QUESTIONS: tuple[str, ...] = (
     "权责发生制与收付实现制对利润表的影响有何不同？",
     "Stockfish 的 NNUE 评估网络怎么做增量更新？",
     "为什么说 FIFO 页面置换算法会出现 Belady 异常？",
+    # --- 英文负样本（Batch B 之后补）---
+    # Batch B 的实测发现：上面 18 条**全部是中文**，于是"拒答能力"只在中文场景有样本、
+    # 英文拒答是零样本。而英文问题占 135/180、英文语料占一半，这个缺口必须补。
+    # 其中若干条与中文侧同主题（Kubernetes / InnoDB / PCR / Stockfish …），
+    # 便于按语言对称地比较拒答行为，而不是比较"话题难度"。
+    "How do I configure a Kubernetes PodDisruptionBudget for a StatefulSet?",
+    "What does the Rust borrow checker do with covariant lifetime parameters?",
+    "How does C++ SFINAE differ from concepts in overload resolution?",
+    "How do I stop Android WorkManager from running the same job twice across processes?",
+    "When is a SwiftUI StateObject deallocated compared with an ObservedObject?",
+    "How does InnoDB next-key locking prevent phantom reads?",
+    "How do I implement transform feedback for a GPU particle system in WebGL?",
+    "What extension time should I use when amplifying a 3 kb fragment by PCR?",
+    "How does accrual accounting differ from cash accounting on the income statement?",
+    "How does Stockfish update its NNUE evaluation network incrementally?",
+    "Why can a two-stage synchroniser not carry a multi-bit signal across clock domains?",
+    "Why does the FIFO page replacement algorithm suffer from Belady's anomaly?",
 )
 
 # 一个关键词出现在多少篇以上就算"大众"。只用于报告里的参考列，不再作为判据——

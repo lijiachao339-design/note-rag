@@ -1,0 +1,17 @@
+{
+  "out": "eval/paths-zh2.json",
+  "lang": "zh",
+  "count": 30,
+  "corpus_files": 1947,
+  "pool_after_lang_and_size_filter": 972,
+  "excluded_names": 60,
+  "available": 957,
+  "stride": 31,
+  "min_bytes": 1024,
+  "corpus_fingerprint_names_and_sizes": "db77baefb2ba482971b836fe3fbe2c840aaeee4b",
+  "first_three": [
+    "notes__archived__architecture__2026-06-11-custom-schema-dsl.zh__a8294e81.md",
+    "notes__archived__architecture__2026-07-24-dsh-commander-argument-adapter.zh__c9cfd234.md",
+    "notes__archived__architecture__2026-08-06-subagent-list-identity-projection.zh__92329a4b.md"
+  ]
+}

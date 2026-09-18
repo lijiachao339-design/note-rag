@@ -1,28 +1,29 @@
 # 评测集构建报告
 
-- 候选问题：**180** 条（来自 60 篇笔记）
-- 通过校验：**180** 条
+- 候选问题：**270** 条（来自 90 篇笔记）
+- 通过校验：**269** 条
 - 重复丢弃：**0** 条
-- 不可回答问题：**18** 条（候选 18 条）
-- 数据集总行数：**198** 行 → `eval\dataset.jsonl`
-- 有译文孪生（记 grade 1）：**177** / 180 条
-- 标记为词法泄漏（`leak: true`，df <= 2）：**31** / 180 条
-- 语言：**135** 条英文 + **45** 条中文
+- 不可回答问题：**27** 条（候选 30 条）
+- 数据集总行数：**296** 行 → `eval\dataset.jsonl`
+- 有译文孪生（记 grade 1）：**266** / 269 条
+- 标记为词法泄漏（`leak: true`，df <= 2）：**66** / 269 条
+- 语言：**135** 条英文 + **134** 条中文
 
 ## 丢弃原因分布
 
 | 原因 | 条数 |
 | --- | --- |
+| answer_span 在源笔记中找不到（疑似幻觉） | 1 |
 
 ## 难度分布（通过校验的正样本）
 
 | 难度 | 条数 |
 | --- | --- |
-| easy | 57 |
-| medium | 97 |
-| hard | 26 |
+| easy | 78 |
+| medium | 147 |
+| hard | 44 |
 
-平均每篇笔记 3.00 条问题，覆盖 60 篇笔记（全语料 1947 篇，覆盖率 3.1%）。
+平均每篇笔记 2.99 条问题，覆盖 90 篇笔记（全语料 1947 篇，覆盖率 4.6%）。
 
 ## 词法泄漏分布（问题与目标笔记共享的最稀有 token 的 note 级 df）
 
@@ -32,14 +33,16 @@
 
 | 共享的最稀有 token 的 df | 条数 |
 | --- | --- |
-| <=2 | 31 |
-| 3-10 | 39 |
-| 11-50 | 70 |
-| >50 | 40 |
+| <=2 | 66 |
+| 3-10 | 72 |
+| 11-50 | 83 |
+| >50 | 48 |
 
-## 被丢弃的负样本
+## 被丢弃的负样本（有笔记覆盖了它的内容词，可能其实有答案）
 
-无。18 条候选的最佳笔记覆盖率全部低于 60%（最高 55%）。
+- How do I stop Android WorkManager from running the same job twice across processes? —— `notes__implemented__architecture__2026-06-20-generic-long-running-tool-runtime__f61a505c.md` 覆盖了它 78% 的内容词
+- What extension time should I use when amplifying a 3 kb fragment by PCR? —— `notes__archived__feature__2026-07-07-plan-mode__d0c358a7.md` 覆盖了它 71% 的内容词
+- Why can a two-stage synchroniser not carry a multi-bit signal across clock domains? —— `notes__archived__feature__2026-07-22-durable-subagent-catalog-and-list-agents__4b871cbe.md` 覆盖了它 62% 的内容词
 
 ## 负样本清单（已保留）
 
@@ -66,3 +69,12 @@
 | 权责发生制与收付实现制对利润表的影响有何不同？ | 29% | `notes__archived__architecture__2026-07-15-lsp-capability-seam.zh__59de0e8f.md` | `付实` | 0 |
 | Stockfish 的 NNUE 评估网络怎么做增量更新？ | 33% | `notes__archived__architecture__2026-07-19-gui-layering-and-rpc-protocol.zh__34572700.md` | `nnue` | 0 |
 | 为什么说 FIFO 页面置换算法会出现 Belady 异常？ | 36% | `notes__archived__bug-fix__2026-07-31-code-runtime-python-settlement-fixes.zh__cdc8dc32.md` | `belady` | 0 |
+| How do I configure a Kubernetes PodDisruptionBudget for a StatefulSet? | 25% | `notes__archived__architecture__2026-07-15-lsp-capability-seam__a9ef44c9.md` | `poddisruptionbudget` | 0 |
+| What does the Rust borrow checker do with covariant lifetime parameters? | 56% | `notes__implemented__architecture__2026-07-08-agent-scope-contexts__698c5b07.md` | `covariant` | 1 |
+| How does C++ SFINAE differ from concepts in overload resolution? | 57% | `notes__archived__architecture__2026-06-17-filesystem-capability-seam__f569c13b.md` | `sfinae` | 0 |
+| When is a SwiftUI StateObject deallocated compared with an ObservedObject? | 43% | `notes__archived__bug-fix__2026-08-06-plan-narrow-viewport-regression__d23029d9.md` | `deallocated` | 0 |
+| How does InnoDB next-key locking prevent phantom reads? | 43% | `notes__archived__architecture__2026-07-28-consolidated-tui-presentation__2708cd73.md` | `innodb` | 0 |
+| How do I implement transform feedback for a GPU particle system in WebGL? | 50% | `notes__implemented__feature__2026-07-07-mcp-client-plugin__9cf4946f.md` | `particle` | 0 |
+| How does accrual accounting differ from cash accounting on the income statement? | 50% | `notes__archived__bug-fix__2026-07-30-source-checkout-workdir-distinction__26aa1f14.md` | `accrual` | 0 |
+| How does Stockfish update its NNUE evaluation network incrementally? | 57% | `notes__archived__architecture__2026-08-11-repository-naming-contract-and-rename-ledger__880869b8.md` | `nnue` | 0 |
+| Why does the FIFO page replacement algorithm suffer from Belady's anomaly? | 56% | `notes__archived__architecture__2026-08-11-repository-naming-contract-and-rename-ledger__880869b8.md` | `belady's` | 0 |
