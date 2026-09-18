@@ -4,8 +4,10 @@
 
 **面向个人 Obsidian 知识库的混合检索服务**：向量检索 + BM25 + RRF 融合 + 可插拔 rerank，通过 HTTP API 和 **MCP Server** 两种方式对外提供服务。
 
-> 下表中「检索指标」一栏仍是待填状态——它需要先构建带标注的评测集（`eval/dataset.jsonl`）。
-> 其余数字（语料规模、索引耗时、测试数、覆盖率）都是本仓库跑出来的实测值，不是估计。
+> 下面所有数字都是本仓库跑出来的实测值，不是估计。
+> **检索指标目前是"离线 hashing 嵌入"的基线**——它暴露出三个已知缺口（向量侧无语义能力、
+> BM25 没有倒排索引、reranker 尚未实现），完整的假设与结论见
+> [docs/experiments/exp-001-baseline-hashing-embedder.md](docs/experiments/exp-001-baseline-hashing-embedder.md)。
 
 ## 实测结果（本机已跑通，不是占位值）
 
@@ -18,7 +20,8 @@
 | 静态门禁 | `ruff check` ✅ ｜ `ruff format --check` ✅ ｜ `mypy --strict` 13 个文件 0 问题 |
 | 测试 | **72 passed**（fusion / metrics / bm25 / notes / ingest / retriever） |
 | HTTP API | `/healthz` → `{"status":"ok","corpus":{"chunks":17520,"notes":1945}}`；`/search` 返回带 `note_path`/`title`/正文的命中 |
-| 检索指标 | 待填：需要先做 `eval/dataset.jsonl`（见下节） |
+| 评测集 | **198 行** = 180 条可回答（135 EN + 45 ZH）+ 18 条不可回答；由 workflow 扇出 61 个 agent 生成，`answer_span` 逐字校验后**零丢弃**、语言一致性 180/180 |
+| 检索指标（基线） | `keyword` recall@5 **0.7879** ＞ `hybrid` 0.6111 ＞ `vector` 0.2677；p95 延迟：`vector` **54 ms** / `keyword` 709 ms（详见下节与实验记录） |
 
 > ⚠️ **依赖 `mcp>=2.2`**：`mcp` 2.x 把 `FastMCP` 改名为 `MCPServer`
 > （`from mcp.server.mcpserver import MCPServer`）。照抄 v1 示例会得到
@@ -175,16 +178,31 @@ claude mcp add note-rag -- uv run --directory C:\path\to\note-rag note-rag mcp
 uv run note-rag eval --dataset eval/dataset.jsonl --out eval/out/ablation.md
 ```
 
-输出（**把这里的占位数字换成你的实测值**）：
+输出（**实测值**，评测集 198 行 = 180 可答 + 18 不可答）：
 
 | metric | vector | keyword | hybrid | hybrid_rerank |
 | --- | --- | --- | --- | --- |
-| recall@1 | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
-| recall@5 | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
-| recall@10 | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
-| mrr | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
-| ndcg@10 | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
-| p95_ms | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
+| recall@1 | 0.1768 | **0.5758** | 0.2778 | 0.2778 |
+| recall@5 | 0.2677 | **0.7879** | 0.6111 | 0.6111 |
+| recall@10 | 0.3182 | **0.8283** | 0.7525 | 0.7525 |
+| mrr | 0.2216 | **0.6650** | 0.4031 | 0.4031 |
+| ndcg@10 | 0.2445 | **0.7049** | 0.4857 | 0.4857 |
+| p95_ms | **54.0** | 709.2 | 733.5 | 774.2 |
+
+### 怎么读这张表（别误读成"hybrid 检索没用"）
+
+1. **`vector` 这一列衡量的不是语义能力**：当前用的是离线 hashing 嵌入（token 哈希到 384 维桶），
+   本质是**有损的词法检索**——同一 token 落同一桶所以确实有信号（recall@10 31.8%，而随机约 0.5%），
+   但哈希冲突把它压得远低于 BM25。换成真实嵌入模型后这一列才会变成语义能力。
+2. **RRF 无法拯救一路无效的召回器**：`hybrid` 正好落在 `vector` 与 `keyword` 之间，符合"融合一个强召回器
+   与一个弱召回器"的预期。RRF 保证的是鲁棒性，不是免费增益；要增益必须两路都有效且互补。
+3. **`hybrid_rerank` 与 `hybrid` 完全相同是刻意的**：`Reranker` 目前是 no-op 原样返回，
+   表格如实反映"尚未实现"，而不是造一个假的提升。
+4. **延迟瓶颈在 BM25 而非向量检索**：`keyword` p95 709 ms vs `vector` 54 ms，差 13 倍——
+   因为 `bm25.py` 每次查询都全量扫描 17520 个文档。建倒排索引后可降到 50 ms 量级。
+
+完整的假设 / 方法 / 结果 / 结论 / 下一步见
+[docs/experiments/exp-001-baseline-hashing-embedder.md](docs/experiments/exp-001-baseline-hashing-embedder.md)。
 
 ## 开发
 

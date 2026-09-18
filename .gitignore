@@ -14,5 +14,8 @@ dist/
 build/
 *.egg-info/
 eval/out/
+# 候选问题是生成过程中的中间产物（一次 60 个文件）；最终数据集由
+# scripts/build_eval_dataset.py 编译得到并入库（eval/dataset.jsonl）。
+eval/candidates/
 data/
 .obsidian/
