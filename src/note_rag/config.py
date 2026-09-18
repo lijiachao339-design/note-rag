@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     vector_weight: float = 1.0
     keyword_weight: float = 1.0
 
+    # HNSW 的 ef_search：pgvector 默认只有 40，而 candidate_k 默认 50。
+    # ef_search 小于请求的 limit 时近似检索会明显掉召回 —— 实测 recall@10 因此丢了 8.6 个点
+    # （0.3182 → 0.4040，精确余弦上界 0.4091），而 p95 延迟几乎不变。
+    # 这类"检索参数"必须显式记录，否则评测数字不可复现（见 docs/reviews/review-001）。
+    hnsw_ef_search: int = 200
+
     # Chunking defaults
     chunk_max_chars: int = 1200
     chunk_overlap_chars: int = 150

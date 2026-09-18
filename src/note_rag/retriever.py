@@ -79,6 +79,8 @@ class Retriever:
     @classmethod
     def from_settings(cls, settings: Settings) -> Retriever:
         conn = store.connect(settings.database_url)
+        # 显式设置 HNSW 的 ef_search：默认 40 小于 candidate_k(50)，会让向量这一路白掉召回。
+        store.set_hnsw_ef_search(conn, settings.hnsw_ef_search)
         return cls(
             conn=conn,
             embedder=build_embedder(

@@ -140,7 +140,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
         reports[mode] = report
 
     lines = ["# Retrieval ablation", "", f"Queries: {len(dataset)}", ""]
-    metrics = ["recall@1", "recall@5", "recall@10", "mrr", "ndcg@10", "p95_ms"]
+    metrics = ["recall@1", "recall@5", "recall@10", "mrr", "ndcg@10", "p50_ms", "p95_ms"]
     lines.append("| metric | " + " | ".join(args.modes) + " |")
     lines.append("| --- | " + " | ".join("---" for _ in args.modes) + " |")
     for metric in metrics:
@@ -155,7 +155,19 @@ def cmd_eval(args: argparse.Namespace) -> int:
         out_path = Path(args.out)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(table, encoding="utf-8")
-        _log(f"wrote {out_path}")
+        # 原始指标同时落盘为 JSON：只写 markdown 表会让实验文档里的某些行无法从提交物复现
+        # （p50_ms 等只出现在 stdout 的报告里）。见 docs/reviews/review-001 的 S9。
+        json_path = out_path.with_suffix(".json")
+        json_path.write_text(
+            json.dumps(
+                {"queries": len(dataset), "modes": list(args.modes), "reports": reports},
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        _log(f"wrote {out_path} and {json_path}")
         for mode, report in reports.items():
             _log(format_report(report, title=mode))
     return 0
