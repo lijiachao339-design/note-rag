@@ -1,8 +1,11 @@
 # note-rag
 
+[![CI](https://github.com/lijiachao339-design/note-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/lijiachao339-design/note-rag/actions/workflows/ci.yml)
+
 **面向个人 Obsidian 知识库的混合检索服务**：向量检索 + BM25 + RRF 融合 + 可插拔 rerank，通过 HTTP API 和 **MCP Server** 两种方式对外提供服务。
 
-> 这是 `实习项目路线图.md` 中 P1 项目的工程骨架，已包含可运行的核心链路、测试、CI 与 Docker。当前检索指标为占位值，替换成你自己跑出来的数字后才写进简历。
+> 下表中「检索指标」一栏仍是待填状态——它需要先构建带标注的评测集（`eval/dataset.jsonl`）。
+> 其余数字（语料规模、索引耗时、测试数、覆盖率）都是本仓库跑出来的实测值，不是估计。
 
 ## 实测结果（本机已跑通，不是占位值）
 
