@@ -45,6 +45,25 @@ def tokenize(text: str) -> list[str]:
     return tokens
 
 
+def content_tokens(text: str) -> list[str]:
+    """The "topical" tokens of a query: ASCII words of 4+ chars plus CJK bigrams.
+
+    Short ASCII words (the/is/a) and CJK unigrams occur in almost every note, so leaving
+    them in dilutes any coverage measure into noise.
+
+    This lives next to :func:`tokenize` on purpose: the eval-set gate that admits an
+    unanswerable question and the runtime signal that decides to abstain must use the same
+    definition, or the numbers they produce cannot be compared.
+    """
+    return sorted(
+        {
+            token
+            for token in tokenize(text)
+            if (token.isascii() and len(token) >= 4) or (not token.isascii() and len(token) == 2)
+        }
+    )
+
+
 class BM25:
     """Okapi BM25 over an in-memory corpus.
 

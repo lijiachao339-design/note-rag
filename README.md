@@ -14,14 +14,14 @@
 | 项 | 实测值 |
 | --- | --- |
 | 语料 | **1947 篇 / 13.41 MB** markdown，由 `scripts/prepare_corpus.py` 固化，指纹 `9854a816415b1a9579b6786af6f975f19af4e06f` |
-| 切块 | **17520 chunks / 1945 notes** |
+| 切块 | **17524 chunks / 1947 notes** |
 | 首次全量索引 | **48.46 s**，17520 次嵌入调用 |
 | 重复同步（增量不变量） | **1.04 s，0 次嵌入**（`nothing changed; skipping embeddings entirely`） |
 | 静态门禁 | `ruff check` ✅ ｜ `ruff format --check` ✅ ｜ `mypy --strict` 13 个文件 0 问题 |
-| 测试 | **72 passed**（fusion / metrics / bm25 / notes / ingest / retriever） |
-| HTTP API | `/healthz` → `{"status":"ok","corpus":{"chunks":17520,"notes":1945}}`；`/search` 返回带 `note_path`/`title`/正文的命中 |
+| 测试 | **88 passed**（fusion / metrics / bm25 / notes / ingest / retriever / cli-eval） |
+| HTTP API | `/healthz` → `{"status":"ok","corpus":{"chunks":17524,"notes":1947}}`；`/search` 返回带 `note_path`/`title`/正文的命中 |
 | 评测集 | **198 行** = 180 条可回答（135 EN + 45 ZH）+ 18 条不可回答；由 workflow 扇出 61 个 agent 生成，`answer_span` 逐字校验后**零丢弃**、语言一致性 180/180 |
-| 检索指标（基线） | `keyword` recall@5 **0.7879** ＞ `hybrid` 0.6111 ＞ `vector` 0.2677；p95 延迟：`vector` **54 ms** / `keyword` 709 ms（详见下节与实验记录） |
+| 检索指标（基线） | 180 条可回答问题上，`keyword` nDCG@10 **0.6530** ＞ `hybrid` 0.4835 ＞ `vector` 0.2668；p50 延迟：`vector` **48 ms** / 其余三者 ~340–395 ms 且**彼此不可区分**（详见下节与实验记录） |
 
 > ⚠️ **依赖 `mcp>=2.2`**：`mcp` 2.x 把 `FastMCP` 改名为 `MCPServer`
 > （`from mcp.server.mcpserver import MCPServer`）。照抄 v1 示例会得到
@@ -167,10 +167,20 @@ claude mcp add note-rag -- uv run --directory C:\path\to\note-rag note-rag mcp
 `eval/dataset.jsonl` 每行一条：
 
 ```json
-{"id": "q001", "question": "RRF 为什么比加权求和更稳？", "relevant_notes": ["20-知识/检索/混合检索.md"]}
+{"id": "q0007", "question": "RRF 为什么比加权求和更稳？",
+ "relevant_notes": {"混合检索__a1b2c3d4.md": 2, "混合检索.zh__e5f6a7b8.md": 1},
+ "answerable": true, "lang": "zh", "leak": false, "leak_min_df": 17}
 ```
 
-生成流程：`note-rag gen-eval` 导出笔记样本 → 交给廉价模型批量生成候选问题 → 强模型抽检剔除"笔记里其实没有答案"的条目 → 人工确认。
+- `relevant_notes` 是**分级相关**：问题所出自的那一篇记 `2`，它的译文孪生记 `1`。
+  孪生同样能回答该问题，判它不相关是错的；但它也不是问题的出处。
+- `answerable: false` + `relevant_notes: []` 是**不可回答问题**，故意混入，用来量化"检索器会不会硬凑答案"。
+- `leak: true` 标记**词法泄漏**：问题里抄了目标笔记的近乎唯一的标识符，BM25 不检索也能精确匹配。
+  这类条目**不删除**，但引用总均值时必须知道它们在里面（`eval/dataset.report.md` 有分组表）。
+
+生成流程：`note-rag gen-eval` 导出笔记样本 → 交给廉价模型批量生成候选问题 →
+`scripts/build_eval_dataset.py` 做确定性编译（`answer_span` 逐字校验、元问题过滤、泄漏标记、
+负样本覆盖率复核）→ 强模型抽检 → 人工确认。同一批候选跑两次必须得到逐字节相同的输出。
 
 跑消融实验：
 
@@ -178,31 +188,64 @@ claude mcp add note-rag -- uv run --directory C:\path\to\note-rag note-rag mcp
 uv run note-rag eval --dataset eval/dataset.jsonl --out eval/out/ablation.md
 ```
 
-输出（**实测值**，评测集 198 行 = 180 可答 + 18 不可答）：
+输出（**实测值**，评测集 198 行 = **180 可答 + 18 不可答，两者分开统计**）：
+
+**排序质量（只统计 180 条可回答问题）**
 
 | metric | vector | keyword | hybrid | hybrid_rerank |
 | --- | --- | --- | --- | --- |
-| recall@1 | 0.1768 | **0.5758** | 0.2778 | 0.2778 |
-| recall@5 | 0.2677 | **0.7879** | 0.6111 | 0.6111 |
-| recall@10 | 0.3182 | **0.8283** | 0.7525 | 0.7525 |
-| mrr | 0.2216 | **0.6650** | 0.4031 | 0.4031 |
-| ndcg@10 | 0.2445 | **0.7049** | 0.4857 | 0.4857 |
-| p95_ms | **54.0** | 709.2 | 733.5 | 774.2 |
+| recall@5 | 0.1833 | **0.4472** | 0.3444 | 0.3444 |
+| recall@10 | 0.2333 | **0.4722** | 0.4361 | 0.4361 |
+| mrr | 0.2811 | **0.7426** | 0.4985 | 0.4985 |
+| ndcg@10 | 0.2668 | **0.6530** | 0.4835 | 0.4835 |
+
+**拒答（18 条不可回答问题；覆盖率 < 0.30 判为拒答）**
+
+| metric | vector | keyword | hybrid | hybrid_rerank |
+| --- | --- | --- | --- | --- |
+| 拒答率（不可回答，越高越好） | 1.0000 | 0.8333 | 1.0000 | 1.0000 |
+| 误拒率（可回答，越低越好） | 0.6167 | **0.1667** | 0.2889 | 0.2889 |
+
+**延迟（每模式重复 3 轮，取重复间中位数）**
+
+| metric | vector | keyword | hybrid | hybrid_rerank |
+| --- | --- | --- | --- | --- |
+| p50_ms | **48.1** | 344.1 | 394.5 | 392.6 |
+| p50 重复间极差 | 0.4 | 135.9 | 6.9 | 3.4 |
 
 ### 怎么读这张表（别误读成"hybrid 检索没用"）
 
+0. **先看口径，再看数字。** 这张表和 `docs/experiments/exp-001` 里的数字**不可直接比较**：
+   - **`recall@k` 的含义变了。** 语料是严格的双语镜像，180 条问题里有 177 条的相关笔记是
+     **2 篇**（原文 grade 2 + 译文孪生 grade 1），所以 recall 的分母是 2，数字天然只有
+     单标签时代的一半左右。单标签下的 `recall@k` 其实是 **Success@k / Hit Rate@k**，
+     不是教科书意义上的 recall。
+   - **不可回答问题不再混进均值。** 它们在 recall/MRR/nDCG 上恒为 0，与检索器返回什么
+     完全无关，混进去只是把所有数字统一乘上 `180/198`。它们的作用在拒答表。
+   - **`precision@k` 已移除**：它恒等于 `recall@k × |relevant| / k`，不提供独立信息。
 1. **`vector` 这一列衡量的不是语义能力**：当前用的是离线 hashing 嵌入（token 哈希到 384 维桶），
-   本质是**有损的词法检索**——同一 token 落同一桶所以确实有信号（recall@10 31.8%，而随机约 0.5%），
-   但哈希冲突把它压得远低于 BM25。换成真实嵌入模型后这一列才会变成语义能力。
+   本质是**有损的词法检索**。换成真实嵌入模型后这一列才会变成语义能力。
 2. **RRF 无法拯救一路无效的召回器**：`hybrid` 正好落在 `vector` 与 `keyword` 之间，符合"融合一个强召回器
    与一个弱召回器"的预期。RRF 保证的是鲁棒性，不是免费增益；要增益必须两路都有效且互补。
 3. **`hybrid_rerank` 与 `hybrid` 完全相同是刻意的**：`Reranker` 目前是 no-op 原样返回，
-   表格如实反映"尚未实现"，而不是造一个假的提升。
-4. **延迟瓶颈在 BM25 而非向量检索**：`keyword` p95 709 ms vs `vector` 54 ms，差 13 倍——
-   因为 `bm25.py` 每次查询都全量扫描 17520 个文档。建倒排索引后可降到 50 ms 量级。
+   表格如实反映"尚未实现"。延迟上两者相差 1.9 ms 而重复间极差有 6.9 ms——**不可区分**，
+   这正是 no-op 应有的样子。
+4. **拒答的两个数必须一起看。** `vector` 的拒答率是完美的 1.0000，但它误拒了 61.7% 的可回答问题——
+   它不是"懂得拒答"，它只是**几乎什么都召不回**。把两者合成判别力（拒答率 − 误拒率）才可比：
+   `hybrid` 0.711 ＞ `keyword` 0.667 ＞ `vector` 0.383。
+5. **nDCG 和 MRR 现在是两个不同的统计量了。** 单标签时代 `nDCG@k = 1/log2(r+1)`、`MRR = 1/r`
+   都只是命中名次 `r` 的函数，必然给出一致的结论——那张表看起来有 6 个指标，其实只有 1 个。
+   改成分级相关之后不再如此：`keyword` 上同为 `MRR = 1.0000` 的查询对应了 **4 种不同的
+   `nDCG@10`（0.8262 ~ 1.0000）**——命中名次一样，但"有没有把孪生也找回来"不一样。
+   **nDCG 现在是这张表里信息量最大的一列。**
+6. **延迟只有 `vector` 与其余三者可区分。** `keyword`/`hybrid`/`hybrid_rerank` 三者的 p50 差
+   （48~50 ms）小于 `keyword` 自己的重复间极差（135.9 ms），在本次测量下**不可区分**。
+   瓶颈仍然是 `bm25.py` 每次查询全量扫描 17524 个文档；建倒排索引后要证明有效，
+   新的 p50 必须低于 **208 ms**（= 344.1 − 135.9）才算可测量的改进。
 
 完整的假设 / 方法 / 结果 / 结论 / 下一步见
-[docs/experiments/exp-001-baseline-hashing-embedder.md](docs/experiments/exp-001-baseline-hashing-embedder.md)。
+[docs/experiments/exp-001-baseline-hashing-embedder.md](docs/experiments/exp-001-baseline-hashing-embedder.md)，
+口径修复的过程见 [docs/reviews/](docs/reviews/)（review-001 审查 → impl-003 数据层 → impl-004 报告层）。
 
 ## 开发
 

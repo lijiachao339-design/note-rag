@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import pytest
 
-from note_rag.cli import _grades_for
+from note_rag.bm25 import content_tokens
+from note_rag.cli import _abstain_coverage, _grades_for
+from note_rag.retriever import SearchHit
 
 
 def test_a_list_of_notes_means_every_note_has_grade_one() -> None:
@@ -31,3 +33,45 @@ def test_an_object_carries_graded_relevance() -> None:
 def test_a_scalar_is_rejected_rather_than_silently_scored_zero() -> None:
     with pytest.raises(ValueError, match="relevant_notes"):
         _grades_for({"id": "q1", "relevant_notes": "a.md"})
+
+
+def _hit(title: str, text: str) -> SearchHit:
+    return SearchHit(
+        chunk_id="c1", note_path="n.md", title=title, heading_path=(), text=text, score=1.0
+    )
+
+
+def test_content_tokens_drops_the_words_that_are_everywhere() -> None:
+    """Short ASCII words and CJK unigrams occur in nearly every note, so they are noise."""
+    tokens = content_tokens("How do the retriever and BM25 handle 混合检索?")
+
+    assert "retriever" in tokens
+    assert "混合" in tokens
+    assert "the" not in tokens, "3 字母的功能词不该算内容词"
+    assert "混" not in tokens, "中文单字不该算内容词"
+
+
+# The value the `note-rag eval --abstain-threshold` default ships with; see docs/reviews/impl-004.
+ABSTAIN_THRESHOLD = 0.30
+
+
+def test_abstain_coverage_separates_an_on_topic_hit_from_an_off_topic_one() -> None:
+    """Both sides of the shipped threshold, on the same retrieved passage.
+
+    An on-topic question does not score near 1.0 even when the passage answers it: the CJK
+    tokenizer emits sliding bigrams, and the ones straddling a word boundary ("么融" out of
+    "怎么融合") are absent from any note. That is exactly why the default threshold is 0.30
+    rather than something that looks tidier.
+    """
+    hits = [_hit("混合检索", "向量检索与 BM25 用 RRF 融合两路排名。")]
+
+    on_topic = _abstain_coverage("BM25 和 RRF 怎么融合排名？", hits)
+    off_topic = _abstain_coverage("InnoDB 的 next-key lock 如何避免幻读？", hits)
+
+    assert on_topic >= ABSTAIN_THRESHOLD, "命中真的覆盖了问题，不该被判为拒答"
+    assert off_topic < ABSTAIN_THRESHOLD, "跑题的命中必须被判为拒答"
+    assert on_topic > off_topic
+
+
+def test_abstain_coverage_of_no_hits_is_zero() -> None:
+    assert _abstain_coverage("任何问题", []) == 0.0

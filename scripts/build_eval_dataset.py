@@ -37,7 +37,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from note_rag.bm25 import tokenize
+from note_rag.bm25 import content_tokens, tokenize
 from note_rag.notes import iter_vault_files
 
 MIN_QUESTION_CHARS = 8
@@ -134,19 +134,17 @@ def load_candidates(directory: Path, stats: Stats) -> list[dict[str, object]]:
     return entries
 
 
-def content_tokens(question: str) -> list[str]:
-    """问题里的"内容词"：ASCII 词（长度 >= 4）与中文二字组，去重后定序。
+def question_lang(question: str) -> str:
+    """``"zh"`` if the question contains any CJK character, else ``"en"``.
 
-    过滤掉 ASCII 短词（the / is / a）与中文单字，它们在任何语料里都到处都是，
-    留着只会把覆盖率稀释成噪声。
+    The corpus is a bilingual mirror and questions are written in the language of the note
+    they came from, so this single test is exact for this dataset. It matters because the
+    BM25 tokenizer treats CJK as unigrams+bigrams: one Chinese question produces far more
+    features than an English one of the same length, which moves the vector and hybrid
+    columns but not the keyword column. Reporting one blended average hides that
+    (docs/reviews/review-001, S7).
     """
-    return sorted(
-        {
-            token
-            for token in tokenize(question)
-            if (token.isascii() and len(token) >= 4) or (not token.isascii() and len(token) == 2)
-        }
-    )
+    return "zh" if any(0x4E00 <= ord(char) <= 0x9FFF for char in question) else "en"
 
 
 def note_doc_freq(note_tokens: dict[str, set[str]]) -> Counter[str]:
@@ -387,6 +385,7 @@ def main(argv: list[str] | None = None) -> int:
                 "answerable": True,
                 "difficulty": item["difficulty"],
                 "answer_span": item["answer_span"],
+                "lang": question_lang(str(item["question"])),
                 "leak": bool(int(str(item["leak_min_df"])) <= LEAK_MAX_DF),
                 "leak_token": item["leak_token"],
                 "leak_min_df": item["leak_min_df"],
@@ -401,6 +400,7 @@ def main(argv: list[str] | None = None) -> int:
                 "answerable": False,
                 "difficulty": "unanswerable",
                 "answer_span": "",
+                "lang": question_lang(str(item["question"])),
                 "leak": False,
             }
         )
@@ -409,6 +409,7 @@ def main(argv: list[str] | None = None) -> int:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     # 报告
+    lang_counts = Counter(question_lang(str(item["question"])) for item in kept)
     difficulty_counts = Counter(str(item["difficulty"]) for item in kept)
     per_note = Counter(str(item["note_path"]) for item in kept)
     lines = [
@@ -421,6 +422,7 @@ def main(argv: list[str] | None = None) -> int:
         f"- 数据集总行数：**{len(rows)}** 行 → `{out_path}`",
         f"- 有译文孪生（记 grade {GRADE_TRANSLATION}）：**{stats.twinned}** / {stats.kept} 条",
         f"- 标记为词法泄漏（`leak: true`，df <= {LEAK_MAX_DF}）：**{stats.leaked}** / {stats.kept} 条",
+        f"- 语言：**{lang_counts.get('en', 0)}** 条英文 + **{lang_counts.get('zh', 0)}** 条中文",
         "",
         "## 丢弃原因分布",
         "",

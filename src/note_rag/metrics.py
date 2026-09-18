@@ -5,15 +5,23 @@ numbers honest:
 
 * Graded relevance is supported (``qrels[qid] = {doc_id: grade}``); a plain ``set`` means
   every relevant document has grade 1.
-* Unanswerable questions are allowed. Put a qid in ``qrels`` with no relevant documents and
-  it is scored as *not* retrieved but *counted* -- that is how you catch a retriever that
-  hallucinates relevance.
+* Unanswerable questions (a qid whose ``qrels`` entry is empty) score 0 on every ranking
+  metric **no matter what the retriever returned**. That makes them useless here: a
+  retriever that correctly returns nothing and one that invents ten hits get the same 0.
+  So they are *excluded* from the ranking report and measured separately by
+  :func:`abstention_report`, which is the function that actually catches a retriever that
+  hallucinates relevance. (An earlier version of this docstring claimed the opposite; the
+  code never supported it. See docs/reviews/review-001, S4.)
+* ``precision@k`` is deliberately absent from :func:`evaluate`: with a fixed number of
+  relevant documents per query it is ``recall@k * |relevant| / k``, a constant multiple that
+  adds a column and no information (docs/reviews/review-001, S6).
 * Every function returns plain floats so the report can be diffed between git commits.
 """
 
 from __future__ import annotations
 
 import math
+import random
 from collections.abc import Iterable, Mapping, Sequence
 
 Qrels = Mapping[str, Mapping[str, float] | Iterable[str]]
@@ -31,8 +39,14 @@ def recall_at_k(
 ) -> float:
     """Fraction of relevant documents found in the top ``k``.
 
-    Returns 0.0 when there is nothing relevant to find (see module docstring: that keeps
-    unanswerable questions in the average instead of silently dropping them).
+    Naming caveat worth stating out loud: when a query has exactly **one** relevant
+    document this is 0 or 1, i.e. it is *Success@k* / *Hit Rate@k*, not what an IR
+    textbook means by recall. This dataset has two relevant notes for most queries (a note
+    and its translated twin), so it is a real recall -- which also means it is **not
+    comparable** to the single-label numbers in exp-001. See docs/reviews/review-001, S6.
+
+    Returns 0.0 when there is nothing relevant to find. Callers must not average that in:
+    it is a constant, not a measurement (see the module docstring).
     """
     if k <= 0:
         raise ValueError("k must be positive")
@@ -110,12 +124,90 @@ def evaluate(
         report[f"recall@{k}"] = (
             sum(recall_at_k(rankings[qid], qrels[qid], k) for qid in rankings) / n
         )
-        report[f"precision@{k}"] = (
-            sum(precision_at_k(rankings[qid], qrels[qid], k) for qid in rankings) / n
-        )
         report[f"ndcg@{k}"] = sum(ndcg_at_k(rankings[qid], qrels[qid], k) for qid in rankings) / n
     report["mrr"] = sum(reciprocal_rank(rankings[qid], qrels[qid]) for qid in rankings) / n
     return report
+
+
+def abstention_report(
+    abstained: Mapping[str, bool], answerable: Mapping[str, bool]
+) -> dict[str, float]:
+    """How well a retriever knows when to say nothing.
+
+    This is the measurement the unanswerable questions exist for. The ranking metrics
+    cannot express it: with no relevant document, recall/MRR/nDCG are 0 for every possible
+    behaviour, so "returned nothing" and "invented ten hits" are indistinguishable there.
+
+    Returns ``abstain_rate_on_unanswerable`` (higher is better) and
+    ``false_abstain_rate_on_answerable`` (the price). Report them as a pair: abstaining on
+    everything scores a perfect 1.0 on the first and is obviously useless.
+    """
+    missing = [qid for qid in abstained if qid not in answerable]
+    if missing:
+        raise ValueError(f"answerable flag missing for {len(missing)} queries, e.g. {missing[:3]}")
+
+    unanswerable_ids = [qid for qid in abstained if not answerable[qid]]
+    answerable_ids = [qid for qid in abstained if answerable[qid]]
+    report: dict[str, float] = {
+        "unanswerable": float(len(unanswerable_ids)),
+        "answerable": float(len(answerable_ids)),
+    }
+    if unanswerable_ids:
+        report["abstain_rate_on_unanswerable"] = sum(
+            1.0 for qid in unanswerable_ids if abstained[qid]
+        ) / len(unanswerable_ids)
+    if answerable_ids:
+        report["false_abstain_rate_on_answerable"] = sum(
+            1.0 for qid in answerable_ids if abstained[qid]
+        ) / len(answerable_ids)
+    return report
+
+
+def cluster_bootstrap_ci(
+    per_query: Mapping[str, float],
+    cluster_of: Mapping[str, str],
+    *,
+    samples: int = 2000,
+    confidence: float = 0.95,
+    seed: int = 0,
+) -> tuple[float, float]:
+    """Percentile bootstrap CI for the mean of ``per_query``, resampling **clusters**.
+
+    The resampling unit has to be the cluster, not the query: this dataset draws 3 questions
+    from each source note, and whether a note is retrieved is shared by all 3. Treating them
+    as independent understates the variance -- measured at ~23% too narrow on this set
+    (docs/reviews/review-001, S7).
+
+    ``seed`` is fixed so the interval is reproducible; a CI that moves between runs is not
+    something you can put in an experiment document.
+    """
+    if not per_query:
+        raise ValueError("per_query must not be empty")
+    if samples <= 0:
+        raise ValueError("samples must be positive")
+    if not 0.0 < confidence < 1.0:
+        raise ValueError("confidence must be within (0, 1)")
+    missing = [qid for qid in per_query if qid not in cluster_of]
+    if missing:
+        raise ValueError(f"cluster missing for {len(missing)} queries, e.g. {missing[:3]}")
+
+    grouped: dict[str, list[float]] = {}
+    for qid, value in per_query.items():
+        grouped.setdefault(cluster_of[qid], []).append(value)
+    clusters = sorted(grouped)
+
+    rng = random.Random(seed)
+    means: list[float] = []
+    for _ in range(samples):
+        drawn: list[float] = []
+        for _ in clusters:
+            drawn.extend(grouped[clusters[rng.randrange(len(clusters))]])
+        means.append(sum(drawn) / len(drawn))
+    means.sort()
+    tail = (1.0 - confidence) / 2.0
+    lo = means[min(len(means) - 1, int(tail * samples))]
+    hi = means[min(len(means) - 1, int((1.0 - tail) * samples))]
+    return (lo, hi)
 
 
 def percentile(values: Sequence[float], p: float) -> float:
