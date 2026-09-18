@@ -66,41 +66,17 @@ flowchart LR
 | 一行流文本处理（grep/sed/awk/jq） | ⚠️ 别扭 | ✅ 顺手 | |
 | 传给原生程序的绝对路径参数 | ✅ | ⚠️ MSYS 会改写 | 实测：`/var/lib/postgresql/data` 被改写成 `C:/Program Files/Git/var/lib/postgresql/data`；需 `MSYS_NO_PATHCONV=1` 或写 `//var/lib/...` |
 
-### ⚠️ 本机已确认的 Git Bash 故障：Anaconda 遮蔽了 `cygpath`
+### Git Bash 上的已知坑
 
-实测环境：Git Bash 5.2.37(MSYS)、Claude Code 2.1.270。
+Git Bash 完全能跑这个项目，但在 Windows 上有几个组合性问题值得先知道：
 
-| 启动方式 | `command -v cygpath` | `claude --version` |
-| --- | --- | --- |
-| 登录 shell（**双击打开 Git Bash 的默认方式**） | `/d/Anaconda3/Library/usr/bin/cygpath` | ❌ `No such file or directory` |
-| 非登录 shell（`bash script.sh`） | `/usr/bin/cygpath` | ✅ `2.1.270 (Claude Code)` |
+- **Anaconda 遮蔽 `cygpath`** → npm 生成的 `claude` shim 会解析出错误路径，`claude` 直接启动失败；
+- **MSYS 会改写传给原生程序的绝对路径** → `docker run -v /abs/path` 挂载到错误的目录；
+- **PowerShell 5.1 的编码默认按 ANSI 解码 UTF-8** → 中文输出乱码、`Get-Content` 行粘连。
 
-原因链（每一步都实测确认）：
+每条的原因、验证命令与修复方式见 **[docs/troubleshooting.md](docs/troubleshooting.md)**。
 
-1. `~/.bash_profile` 里有 conda init（5 行 conda 相关代码）；
-2. 登录 shell 加载它后，Anaconda 把 `/d/Anaconda3/Library/usr/bin` 插到 PATH **第 3 位**，Git 的 `/usr/bin` 被挤到第 11 位；
-3. Anaconda 自带一个 `cygpath`，于是 npm 的 `claude` shim 里的 `cygpath -w` 调用命中了它；
-4. Anaconda 的 cygpath 把 `/c/Users/...` 按自己的根目录换算，得到
-   `D:\Anaconda3\Library\c\Users\...\npm/node_modules/.../claude.exe` —— 这个路径不存在。
-
-**修复（三选一，推荐第 1 个）**：
-
-```bash
-# 1) 在 ~/.bash_profile 的 conda 块【之后】追加一行，把 Git 的 /usr/bin 抢回最前（永久生效）
-echo 'export PATH="/usr/bin:$PATH"' >> ~/.bash_profile
-
-# 2) 临时修正，只影响这一次调用
-PATH="/usr/bin:$PATH" claude
-
-# 3) 不再在 Git Bash 里用 conda（你已经在用 uv，conda 在这里价值不大）
-#    用编辑器把 ~/.bash_profile 里 conda init 那几行注释掉
-```
-
-**另一个副作用**：登录 shell 里裸 `python` 会解析到 **Anaconda 的 Python**，而不是 `D:\python`(3.14)。
-所以本项目一律走 `uv run ...`，不要用裸 `python`，否则解释器会随 shell 漂移。
-
-用同一套 shim 机制的 `pnpm` 大概率也受影响，顺手验证一下：`bash -lc 'pnpm --version'`。
-`uv` 是原生 exe（装在 `%USERPROFILE%\.local\bin`），不受此问题影响。
+一句话结论：**日常用 PowerShell（由 Windows Terminal 承载）当主 shell，Git Bash 留给 git 操作和文本处理一行流。**
 
 ### 一个常见误解（重要）
 
@@ -169,11 +145,11 @@ uv run note-rag ingest
 两种 shell 里命令完全相同（PowerShell 与 Git Bash 均可）：
 
 ```bash
-claude mcp add note-rag -- uv run --directory D:/AI/projects/note-rag note-rag mcp
+claude mcp add note-rag -- uv run --directory /path/to/note-rag note-rag mcp
 ```
 
 ```powershell
-claude mcp add note-rag -- uv run --directory D:\AI\projects\note-rag note-rag mcp
+claude mcp add note-rag -- uv run --directory C:\path\to\note-rag note-rag mcp
 ```
 
 加完在 Claude Code 里执行 `/mcp`，确认 `search_notes` / `read_note` / `list_recent` 三个工具可见。

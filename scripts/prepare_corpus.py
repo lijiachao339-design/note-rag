@@ -6,14 +6,14 @@
 
 用法示例：
 
-    # 用本机 DSH 仓库的架构笔记做压力语料（1948 篇）
+    # 把某个目录下的 markdown 汇总成语料
     uv run python scripts/prepare_corpus.py \
-        --src "D:/AI_project/deepseek-harness/.agents/notes" \
+        --src "C:/path/to/your/vault" \
         --out data/corpus
 
-    # 多加一路公开语料，并限制总量
+    # 多加一路语料并限制总量（脚本会按内容 sha1 去重、再均匀抽样）
     uv run python scripts/prepare_corpus.py \
-        --src data/downloaded --src "D:/AI_project/deepseek-harness/docs" \
+        --src data/downloaded --src "C:/path/to/another/notes" \
         --out data/corpus --limit 2500
 
     # 只看统计，不写文件
