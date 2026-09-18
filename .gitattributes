@@ -1,0 +1,39 @@
+# 换行符与二进制文件规范。
+#
+# 为什么必须存在这个文件：本机 git 的 core.autocrlf=true（已实测），
+# 意味着 checkout 时会把 LF 自动转成 CRLF。对混合 shell 的项目这会直接炸：
+#   - *.sh 带 CRLF → bash 报 `bad interpreter: /bin/sh^M` 或 `$'\r': command not found`
+#   - Dockerfile 里 `\` 续行被 CRLF 打断 → 构建报 `/bin/sh: \r: not found`
+# 所以：默认全部 LF，只有 Windows 原生工具偏好的脚本类型显式声明 CRLF。
+
+* text=auto eol=lf
+
+# Windows 原生宿主需要的类型
+*.ps1   text eol=crlf
+*.psm1  text eol=crlf
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+
+# 必须 LF 的类型（在 bash / 容器 / CI 里执行）
+*.sh        text eol=lf
+*.bash      text eol=lf
+Dockerfile  text eol=lf
+*.dockerfile text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.json      text eol=lf
+*.jsonl     text eol=lf
+*.toml      text eol=lf
+*.py        text eol=lf
+*.md        text eol=lf
+
+# 二进制
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.pdf  binary
+*.ico  binary
+*.sqlite binary
+*.db   binary

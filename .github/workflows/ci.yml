@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    services:
+      pg:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: note_rag
+          POSTGRES_PASSWORD: note_rag
+          POSTGRES_DB: note_rag
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U note_rag"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      NOTE_RAG_DATABASE_URL: postgresql://note_rag:note_rag@localhost:5432/note_rag
+      NOTE_RAG_REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Format check (ruff)
+        run: uv run ruff format --check .
+
+      - name: Type check (mypy strict)
+        run: uv run mypy
+
+      - name: Tests
+        run: uv run pytest --cov=src/note_rag --cov-report=term-missing
+
+      - name: Smoke test migrations
+        run: uv run python -c "from note_rag.store import ensure_schema; ensure_schema(); print('schema ok')"

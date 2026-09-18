@@ -1,0 +1,80 @@
+[project]
+name = "note-rag"
+version = "0.1.0"
+description = "Hybrid retrieval (vector + BM25 + RRF + rerank) over an Obsidian vault, exposed as an MCP server"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "psycopg[binary,pool]>=3.2",
+    "pgvector>=0.3.6",
+    "redis>=5.2",
+    "httpx>=0.27",
+    "mcp>=2.2,<3",
+    "pyyaml>=6.0",
+    "orjson>=3.10",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "types-PyYAML>=6.0",
+]
+
+[project.scripts]
+note-rag = "note_rag.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/note_rag"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+# 显式排除：语料目录可能有上千个文件，且仓库尚未 git init 时 .gitignore 不会生效，
+# 会让 lint 从 26 个文件膨胀到 2000 个。
+extend-exclude = ["data", ".venv", "build", "dist", ".selfcheck_vault"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "C4", "PT"]
+ignore = [
+    "E501",   # 行长交给 formatter 决定
+    # 本项目的注释、docstring 与文档一律使用中文全角标点（，。：（）“”），
+    # RUF001/002/003 会把它们判为“歧义字符”。这两条规则对 CJK 项目是纯噪声。
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src"]
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+# yaml 的真实类型标注由 types-PyYAML 提供；装上之前先忽略，避免阻塞 CI。
+module = ["pgvector.*", "mcp.*", "yaml.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q --strict-markers"
+
+[tool.coverage.run]
+source = ["src/note_rag"]

@@ -1,0 +1,4 @@
+{"id": "q001", "question": "RRF 为什么比把两路分数加权求和更稳？", "relevant_notes": ["20-知识/检索/混合检索.md"]}
+{"id": "q002", "question": "BM25 里的 b 参数控制什么？", "relevant_notes": ["20-知识/检索/BM25.md"]}
+{"id": "q003", "question": "pgvector 的 HNSW 索引和 IVFFlat 有什么区别？", "relevant_notes": ["20-知识/数据库/pgvector.md"]}
+{"id": "q004", "question": "增量索引怎么判断一个 chunk 需要重新嵌入？", "relevant_notes": ["10-项目/P1-笔记RAG/10-设计.md"]}
