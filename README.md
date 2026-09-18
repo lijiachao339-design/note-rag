@@ -18,10 +18,10 @@
 | 首次全量索引 | **48.46 s**，17520 次嵌入调用 |
 | 重复同步（增量不变量） | **1.04 s，0 次嵌入**（`nothing changed; skipping embeddings entirely`） |
 | 静态门禁 | `ruff check` ✅ ｜ `ruff format --check` ✅ ｜ `mypy --strict` 13 个文件 0 问题 |
-| 测试 | **92 passed**（fusion / metrics / bm25 / notes / ingest / retriever / cli-eval） |
+| 测试 | **96 passed**（fusion / metrics / bm25 / bm25 等价性 / notes / ingest / retriever / cli-eval） |
 | HTTP API | `/healthz` → `{"status":"ok","corpus":{"chunks":17524,"notes":1947}}`；`/search` 返回带 `note_path`/`title`/正文的命中 |
 | 评测集 | **296 行** = 269 条可回答（135 EN + 134 ZH，来自 90 篇笔记，中英各 45 篇）+ 27 条不可回答（9 EN + 18 ZH）；`answer_span` 逐字校验丢弃 1 条，负样本覆盖率闸门丢弃 3 条；66/269 标记为词法泄漏 |
-| 检索指标（基线） | 269 条可回答问题上（strict 视图），`keyword` recall@5 **0.8922** / nDCG@10 **0.7967** ＞ `hybrid` 0.7138 / 0.6237 ＞ `vector` 0.4238 / 0.3829；剔除词法泄漏后 `keyword` recall@5 **0.8621**；p50 延迟：`vector` **48 ms** / 其余三者 ~350–397 ms（详见下节与实验记录） |
+| 检索指标（基线） | 269 条可回答问题上（strict 视图），`keyword` recall@5 **0.8922** / nDCG@10 **0.7967** ＞ `hybrid` 0.7138 / 0.6237 ＞ `vector` 0.4238 / 0.3829；剔除词法泄漏后 `keyword` recall@5 **0.8621**；p50 延迟：`keyword` **9 ms**（倒排索引，见 impl-006）/ `vector` 48 ms / `hybrid` 59 ms（详见下节与实验记录） |
 
 > ⚠️ **依赖 `mcp>=2.2`**：`mcp` 2.x 把 `FastMCP` 改名为 `MCPServer`
 > （`from mcp.server.mcpserver import MCPServer`）。照抄 v1 示例会得到
@@ -225,8 +225,8 @@ uv run note-rag eval --dataset eval/dataset.jsonl --out eval/out/ablation.md
 
 | metric | vector | keyword | hybrid | hybrid_rerank |
 | --- | --- | --- | --- | --- |
-| p50_ms | **47.9** | 349.7 | 396.5 | 397.2 |
-| p50 重复间极差 | 0.1 | 11.6 | 4.1 | 30.7 |
+| p50_ms | 47.9 | **9.1** | 58.6 | 58.5 |
+| p50 重复间极差 | 0.2 | 0.3 | 0.5 | 0.7 |
 
 ### 怎么读这张表（别误读成"hybrid 检索没用"）
 
@@ -257,8 +257,14 @@ uv run note-rag eval --dataset eval/dataset.jsonl --out eval/out/ablation.md
    `hybrid` 0.532 ＞ `keyword` 0.458 ＞ `vector` 0.301。
    **已知缺陷**：这个阈值对中英不公平（英文误拒 5.2%，中文误拒 51.5%），原因见
    [docs/experiments/exp-003](docs/experiments/exp-003-dataset-v2-leakage-and-language.md)。
-6. **延迟只有 `vector` 与其余三者可区分。** 瓶颈是 `bm25.py` 每次查询全量扫描 17524 个文档；
-   建倒排索引后要证明有效，新的 p50 必须低于 **320 ms** 才算可测量的改进。
+6. **BM25 现在是最快的一路（9.1 ms），瓶颈换到了向量检索。** `bm25.py` 已改成倒排索引：
+   `keyword` 的 p50 从 349.7 ms 降到 **9.1 ms**（38×），且与改造前**每个指标逐位相同**
+   （296 条查询的完整排名 0 处不同）。有意思的是，原来的耗时里 **83% 并不是"全量扫描"，
+   而是把查询重复分词了 17524 次** —— 详见
+   [impl-006](docs/reviews/impl-006-bm25-inverted-index.md)。
+   现在 `hybrid`(58.6) ≈ `vector`(47.9) + `keyword`(9.1)，加性结构第一次可见；
+   剩余瓶颈是 pgvector 的那次往返。`hybrid` 与 `hybrid_rerank` 差 0.1 ms 而噪声 0.7 ms，
+   **不可区分** —— 对 no-op reranker 这是正确答案。
 
 完整的假设 / 方法 / 结果 / 结论 / 下一步见
 [docs/experiments/](docs/experiments/)，口径修复的过程见
