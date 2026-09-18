@@ -13,7 +13,12 @@ htmlcov/
 dist/
 build/
 *.egg-info/
-eval/out/
+# 评测产物：小的结果文件必须进版本库，否则"实验文档里的数字无法从提交物复现"
+# （这条是 review-001 的 S9 指出的问题，Batch A 之后仍未修好）。
+# 大的逐查询排序文件（ablation.rankings.json，约 740 KB）保持忽略——它可由脚本重新生成。
+eval/out/*
+!eval/out/ablation.md
+!eval/out/ablation.json
 # 候选问题是生成过程中的中间产物（一次 60 个文件）；最终数据集由
 # scripts/build_eval_dataset.py 编译得到并入库（eval/dataset.jsonl）。
 eval/candidates/
